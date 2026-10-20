@@ -1,0 +1,97 @@
+version: "3.9"
+
+services:
+  # ─────────────────────────────────────────
+  # PostgreSQL – penyimpanan data utama
+  # ─────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: etl_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-etl_db}
+      POSTGRES_USER: ${POSTGRES_USER:-etl_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-etl_pass}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init_db.sql:/docker-entrypoint-initdb.d/init_db.sql
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-etl_user} -d ${POSTGRES_DB:-etl_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Redis – message broker untuk Celery
+  # ─────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: etl_redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # Celery Worker – menjalankan task ETL
+  # ─────────────────────────────────────────
+  celery_worker:
+    build: .
+    container_name: etl_worker
+    restart: unless-stopped
+    command: celery -A tasks.celery_app worker --loglevel=info --concurrency=2 -Q etl_queue
+    env_file: .env
+    volumes:
+      - .:/app
+      - worker_logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────
+  # Celery Beat – scheduler / penjadwal
+  # ─────────────────────────────────────────
+  celery_beat:
+    build: .
+    container_name: etl_beat
+    restart: unless-stopped
+    command: celery -A tasks.celery_app beat --loglevel=info 
+    env_file: .env
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ─────────────────────────────────────────
+  # Flower – monitoring Celery (opsional)
+  # ─────────────────────────────────────────
+  flower:
+    build: .
+    container_name: etl_flower
+    restart: unless-stopped
+    command: celery -A tasks.celery_app flower --port=5555 --basic_auth=${FLOWER_USER:-admin}:${FLOWER_PASS:-admin123}
+    env_file: .env
+    ports:
+      - "5555:5555"
+    depends_on:
+      - redis
+      - celery_worker
+
+volumes:
+  postgres_data:
+  redis_data:
+  worker_logs:

@@ -1,0 +1,28 @@
+# Web framework & API
+requests==2.31.0
+httpx==0.27.0
+
+# Database
+psycopg2-binary==2.9.9
+SQLAlchemy==2.0.30
+alembic==1.13.1
+
+# Celery & Redis
+celery==5.3.6
+redis==5.0.4
+celery[redis]==5.3.6
+
+# Scheduler
+
+# Data processing
+pandas==2.2.2
+numpy==1.26.4
+
+# Environment & config
+python-dotenv==1.0.1
+
+# Logging & monitoring
+structlog==24.1.0
+
+# Flower (Celery monitoring UI)
+flower==2.0.1
