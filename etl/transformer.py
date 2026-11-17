@@ -44,6 +44,23 @@ def _parse_datetime(series: pd.Series) -> pd.Series:
                 continue
     return parsed
 
+def _parse_time_on_date(series: pd.Series, base: pd.Series) -> pd.Series:
+    """Kolom berisi jam saja ('09:15:00'): gabungkan dengan tanggal dari `base`
+    (tgl_diterima). Jam lebih kecil dari jam `base` = lewat tengah malam -> +1 hari.
+    Jika isinya sudah tanggal lengkap, di-parse seperti biasa."""
+    s = series.astype("string").str.strip()
+    is_time = s.str.fullmatch(r"\d{1,2}:\d{2}(:\d{2})?").fillna(False).astype(bool)
+
+    full = _parse_datetime(series.where(~is_time))
+
+    t_str = s.where(is_time).astype(object)
+    t_str = t_str.where(~is_time | t_str.astype(str).str.count(":").eq(2),
+                        t_str.astype(str) + ":00")
+    t = pd.to_timedelta(t_str, errors="coerce")
+
+    combined = base.dt.normalize() + t
+    combined = combined.where(~(combined < base), combined + pd.Timedelta(days=1))
+    return full.where(~is_time, combined)
 # ────────────────────────────────────────────────────────────
 # A. DATA CLEANING
 # ────────────────────────────────────────────────────────────
@@ -61,9 +78,12 @@ def clean_raw_data() -> pd.DataFrame:
     sql_unprocessed = """
         SELECT r.*
         FROM raw_log_activity r
-        LEFT JOIN etl_processed_tickets e ON r.tiket = e.tiket
-        WHERE e.tiket IS NULL
-          AND r.tiket IS NOT NULL
+        LEFT JOIN fact_ticket_clean f ON r.tiket = f.tiket
+        WHERE r.tiket IS NOT NULL
+          AND (
+                f.tiket IS NULL                  -- tiket baru
+             OR r.updated_at > f.processed_at    -- tiket berubah di API
+          )
     """
     df = pd.read_sql(sql_unprocessed, engine)
 
@@ -79,13 +99,14 @@ def clean_raw_data() -> pd.DataFrame:
     logger.info(f"Setelah dedup: {len(df)} baris (hapus {before - len(df)} duplikat)")
 
     # ── 2. Konversi kolom datetime ─────────────────────────────
-    datetime_cols = [
-        "waktu_kejadian", "tgl_diterima", "waktu_tanggap",
-        "waktu_penyelesaian", "tgl_selesai", "tgl_esk",
-    ]
-    for col in datetime_cols:                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               
+    for col in ["waktu_kejadian", "tgl_diterima", "tgl_selesai", "tgl_esk"]:
         if col in df.columns:
             df[col] = _parse_datetime(df[col])
+
+    # Kolom berisi jam saja -> digabung dengan tanggal tgl_diterima
+    for col in ["waktu_tanggap", "waktu_penyelesaian"]:
+        if col in df.columns:
+            df[col] = _parse_time_on_date(df[col], df["tgl_diterima"])
 
     # ── 3. Validasi wajib: tgl_diterima tidak boleh null ───────
     before = len(df)
@@ -173,16 +194,14 @@ def process_to_fact_table(df_clean: pd.DataFrame) -> pd.DataFrame:
 
 def load_fact_ticket_clean(df: pd.DataFrame) -> int:
     """
-    Simpan fact_ticket_clean ke PostgreSQL.
-    Gunakan INSERT ... ON CONFLICT DO NOTHING untuk idempotent.
-
-    Returns:
-        int: jumlah baris yang berhasil diinsert
+    Upsert ke fact_ticket_clean:
+      - tiket baru  → INSERT
+      - tiket lama  → UPDATE (status, waktu, dll ikut diperbarui)
+    Returns: jumlah baris yang di-insert/update
     """
     if df.empty:
         return 0
 
-    # Kolom yang masuk ke fact_ticket_clean
     fact_cols = [
         "tiket", "id_masalah", "waktu_kejadian", "prioritas", "dampak",
         "target", "pihak", "jenis_masalah", "klasifikasi", "tgl_diterima",
@@ -195,7 +214,6 @@ def load_fact_ticket_clean(df: pd.DataFrame) -> int:
 
     df_save = df[[c for c in fact_cols if c in df.columns]].copy()
 
-    # Simpan ke tabel sementara dulu
     df_save.to_sql(
         name="_temp_fact_ticket",
         con=engine,
@@ -203,26 +221,29 @@ def load_fact_ticket_clean(df: pd.DataFrame) -> int:
         index=False,
     )
 
-    # Upsert: insert jika tiket belum ada
-    sql_upsert = """
+    def q(c: str) -> str:
+        return f'"{c}"' if c == "user" else c
+
+    cols = ", ".join(q(c) for c in df_save.columns)
+    set_clause = ", ".join(
+        f"{q(c)} = EXCLUDED.{q(c)}" for c in df_save.columns if c != "tiket"
+    )
+
+    sql_upsert = f"""
         INSERT INTO fact_ticket_clean ({cols})
         SELECT {cols} FROM _temp_fact_ticket
-        ON CONFLICT (tiket) DO NOTHING
-    """.format(cols=", ".join(f'"{c}"' if c == "user" else c for c in df_save.columns.tolist()))
+        ON CONFLICT (tiket) DO UPDATE SET
+            {set_clause},
+            processed_at = NOW()
+    """
 
     with get_connection() as conn:
         result = conn.execute(text(sql_upsert))
-        inserted = result.rowcount
-
-    # Tandai tiket sebagai sudah diproses
-    _mark_tickets_processed(df["tiket"].tolist())
-
-    # Hapus tabel temp
-    with get_connection() as conn:
+        affected = result.rowcount
         conn.execute(text("DROP TABLE IF EXISTS _temp_fact_ticket"))
 
-    logger.info(f"fact_ticket_clean: {inserted} baris baru diinsert")
-    return inserted
+    logger.info(f"fact_ticket_clean: {affected} baris di-upsert (baru + berubah)")
+    return affected
 
 
 def _mark_tickets_processed(tikets: list):

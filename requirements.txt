@@ -11,6 +11,7 @@ alembic==1.13.1
 celery==5.3.6
 redis==5.0.4
 celery[redis]==5.3.6
+kombu==5.3.7
 
 # Scheduler
 
@@ -26,3 +27,10 @@ structlog==24.1.0
 
 # Flower (Celery monitoring UI)
 flower==2.0.1
+
+# Dashboard
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+jinja2==3.1.4
+itsdangerous==2.2.0
+python-multipart==0.0.9

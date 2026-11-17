@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="id"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Masuk – Helpdesk Track</title>
+<link rel="icon" href="/static/logo.png">
+<link rel="stylesheet" href="/static/style.css">
+</head><body class="login">
+<form class="login-box" method="post" action="/login">
+  <img src="/static/logo.png" alt="Helpdesk Track">
+  <h1>Masuk ke dashboard</h1>
+  <p class="sub">Pantau tiket dan kinerja petugas helpdesk.</p>
+  {% if error %}<div class="err" role="alert">{{ error }}</div>{% endif %}
+  <label for="u">Username</label>
+  <input id="u" name="username" type="text" autocomplete="username" required autofocus>
+  <label for="p">Password</label>
+  <input id="p" name="password" type="password" autocomplete="current-password" required>
+  <button class="btn" type="submit">Masuk</button>
+</form>
+</body></html>

@@ -87,7 +87,7 @@ def _upsert_raw_log_activity(df: pd.DataFrame):
             :tgl_esk, :status, :petugas, :komentar, :eskalasi,
             :petugas_esk, :fetched_at, :batch_id
         )
-        ON CONFLICT (id_masalah)
+                ON CONFLICT (id_masalah)
         DO UPDATE SET
             tiket = EXCLUDED.tiket,
             waktu_kejadian = EXCLUDED.waktu_kejadian,
@@ -114,7 +114,35 @@ def _upsert_raw_log_activity(df: pd.DataFrame):
             eskalasi = EXCLUDED.eskalasi,
             petugas_esk = EXCLUDED.petugas_esk,
             fetched_at = NOW(),
+            updated_at = NOW(),
             batch_id = EXCLUDED.batch_id
+        WHERE (
+            raw_log_activity.tiket, raw_log_activity.waktu_kejadian,
+            raw_log_activity.prioritas, raw_log_activity.dampak,
+            raw_log_activity.target, raw_log_activity.pihak,
+            raw_log_activity.jenis_masalah, raw_log_activity.klasifikasi,
+            raw_log_activity.tgl_diterima, raw_log_activity.id_cabang,
+            raw_log_activity."user", raw_log_activity.pelapor,
+            raw_log_activity.masalah, raw_log_activity.waktu_tanggap,
+            raw_log_activity.penyebab, raw_log_activity.penyelesaian,
+            raw_log_activity.waktu_penyelesaian, raw_log_activity.tgl_selesai,
+            raw_log_activity.tgl_esk, raw_log_activity.status,
+            raw_log_activity.petugas, raw_log_activity.komentar,
+            raw_log_activity.eskalasi, raw_log_activity.petugas_esk
+        ) IS DISTINCT FROM (
+            EXCLUDED.tiket, EXCLUDED.waktu_kejadian,
+            EXCLUDED.prioritas, EXCLUDED.dampak,
+            EXCLUDED.target, EXCLUDED.pihak,
+            EXCLUDED.jenis_masalah, EXCLUDED.klasifikasi,
+            EXCLUDED.tgl_diterima, EXCLUDED.id_cabang,
+            EXCLUDED."user", EXCLUDED.pelapor,
+            EXCLUDED.masalah, EXCLUDED.waktu_tanggap,
+            EXCLUDED.penyebab, EXCLUDED.penyelesaian,
+            EXCLUDED.waktu_penyelesaian, EXCLUDED.tgl_selesai,
+            EXCLUDED.tgl_esk, EXCLUDED.status,
+            EXCLUDED.petugas, EXCLUDED.komentar,
+            EXCLUDED.eskalasi, EXCLUDED.petugas_esk
+        )
     """)
 
     with engine.begin() as conn:

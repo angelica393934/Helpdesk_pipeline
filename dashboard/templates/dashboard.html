@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="id"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Dashboard – Helpdesk Track</title>
+<link rel="icon" href="/static/logo.png">
+<link rel="stylesheet" href="/static/style.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head><body>
+<header class="top">
+  <img src="/static/logo.png" alt="Helpdesk Track">
+  <span class="sp"></span>
+  <span class="who">{{ user }}</span>
+  <a class="out" href="/logout" title="Keluar" aria-label="Keluar">
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+  </a>
+</header>
+<main>
+  <div class="toolbar">
+    <div><h1>Ringkasan tiket</h1><p id="note">Memuat data…</p></div>
+    <label class="range">Rentang waktu
+      <select id="range">
+        <option value="7">7 hari terakhir</option>
+        <option value="30" selected>30 hari terakhir</option>
+        <option value="90">90 hari terakhir</option>
+        <option value="365">1 tahun terakhir</option>
+      </select>
+    </label>
+  </div>
+  <section class="kpis">
+    <div class="kpi main"><small>Total tiket</small><b id="k-total">–</b></div>
+    <div class="kpi"><small>Tingkat selesai</small><b id="k-rate">–</b></div>
+    <div class="kpi"><small>Rata-rata respon</small><b id="k-resp">–</b></div>
+    <div class="kpi"><small>Rata-rata penyelesaian</small><b id="k-res">–</b></div>
+  </section>
+  <section class="22222grid">
+    <div class="card c8"><h2>Tren tiket harian</h2><div class="chart"><canvas id="ch-trend"></canvas></div></div>
+    <div class="card c4"><h2>Jenis masalah teratas</h2><div class="chart"><canvas id="ch-jenis"></canvas></div></div>
+    <div class="card c6"><h2>Tiket masuk per jam</h2><div class="chart"><canvas id="ch-hour"></canvas></div></div>
+    <div class="card c6"><h2>Peringkat petugas <span id="lb-per" style="color:var(--mute);font-weight:500"></span></h2>
+      <table><thead><tr><th>Petugas</th><th class="n">Tiket</th><th class="n">Selesai</th><th class="n">Skor</th></tr></thead><tbody id="lb"></tbody></table></div>
+    <div class="card c12"><h2>Riwayat proses ETL</h2>
+      <table><thead><tr><th>Task</th><th>Status</th><th class="n">Baris baru</th><th>Mulai</th></tr></thead><tbody id="etl"></tbody></table></div>
+  </section>
+</main>
+<script>
+const SKY="#0ea5e9", NAVY="#04548a", PALE="#bae6fd";
+const $=id=>document.getElementById(id), charts={};
+const get=async(u)=>{const r=await fetch(u); if(r.status===401){location="/login";return null} return r.json()};
+const fmtMin=m=>m==null?"–":m>=60?(m/60).toFixed(1)+" jam":m+" mnt";
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const axisTitle=t=>({display:true,text:t,color:"#5b7487",font:{weight:600}});
+
+function draw(id,cfg){charts[id]?.destroy(); charts[id]=new Chart($(id),{...cfg,options:{responsive:true,maintainAspectRatio:false,...cfg.options}})}
+
+async function load(){
+  const d=$("range").value;
+  const [s,t,h,j,lb,etl]=await Promise.all([
+    get("/api/summary?d="+d),get("/api/trend?d="+d),get("/api/hourly?d="+d),
+    get("/api/jenis?d="+d),get("/api/leaderboard"),get("/api/etl-log")]);
+  if(!s) return;
+  $("note").textContent=$("range").selectedOptions[0].text+" · berdasarkan tanggal tiket diterima";
+  $("k-total").textContent=Number(s.total).toLocaleString("id-ID");
+  $("k-rate").textContent=s.total?Math.round(s.selesai/s.total*100)+"%":"–";
+  $("k-resp").textContent=fmtMin(s.avg_response);
+  $("k-res").textContent=fmtMin(s.avg_resolution);
+
+  draw("ch-trend",{type:"line",data:{labels:t.map(x=>x.label.slice(5)),datasets:[
+    {label:"Masuk",data:t.map(x=>x.total),borderColor:SKY,backgroundColor:"rgba(14,165,233,.12)",fill:true,tension:.3,pointRadius:0},
+    {label:"Selesai",data:t.map(x=>x.selesai),borderColor:NAVY,tension:.3,pointRadius:0}]},
+    options:{interaction:{mode:"index",intersect:false},scales:{x:{title:axisTitle("Tanggal (bulan-hari)")},y:{beginAtZero:true,title:axisTitle("Jumlah tiket")}}}});
+
+  draw("ch-jenis",{type:"bar",data:{labels:j.map(x=>x.label),datasets:[{label:"Tiket",data:j.map(x=>x.total),backgroundColor:SKY,borderRadius:4}]},
+    options:{indexAxis:"y",plugins:{legend:{display:false}},scales:{x:{beginAtZero:true,title:axisTitle("Jumlah tiket")}}}});
+
+  const hrs=[...Array(24).keys()], hm=Object.fromEntries(h.map(x=>[x.label,x.total])), mx=Math.max(...hrs.map(x=>hm[x]||0));
+  draw("ch-hour",{type:"bar",data:{labels:hrs.map(x=>String(x).padStart(2,"0")+":00"),datasets:[{label:"Tiket",data:hrs.map(x=>hm[x]||0),
+      backgroundColor:hrs.map(x=>(hm[x]||0)===mx&&mx>0?NAVY:PALE),borderRadius:3}]},
+    options:{plugins:{legend:{display:false},tooltip:{callbacks:{title:i=>"Jam "+i[0].label,label:c=>c.parsed.y+" tiket"}}},
+      scales:{x:{title:axisTitle("Jam tiket diterima"),ticks:{autoSkip:false,maxRotation:90,minRotation:90,font:{size:10}}},
+              y:{beginAtZero:true,title:axisTitle("Jumlah tiket"),ticks:{precision:0}}}}});
+
+  $("lb-per").textContent=lb.length?"· "+lb[0].periode:"";
+  $("lb").innerHTML=lb.length?lb.map(r=>`<tr><td>${esc(r.petugas)}</td><td class="n">${r.total_tiket}</td><td class="n">${r.total_selesai}</td><td class="n"><b>${(r.skor*100).toFixed(1)}</b></td></tr>`).join(""):`<tr><td colspan="4" class="empty">Belum ada data. Jalankan ETL dulu.</td></tr>`;
+  $("etl").innerHTML=etl.length?etl.map(r=>`<tr><td>${esc(r.task_name)}</td><td><span class="pill ${esc(r.status)}">${esc(r.status)}</span></td><td class="n">${r.rows_new??"–"}</td><td>${esc(r.mulai)}</td></tr>`).join(""):`<tr><td colspan="4" class="empty">Belum ada riwayat.</td></tr>`;
+}
+$("range").onchange=load; load(); setInterval(load,60000);
+</script>
+</body></html>
