@@ -26,18 +26,28 @@
       </select>
     </label>
   </div>
+
   <section class="kpis">
     <div class="kpi main"><small>Total tiket</small><b id="k-total">–</b></div>
     <div class="kpi"><small>Tingkat selesai</small><b id="k-rate">–</b></div>
     <div class="kpi"><small>Rata-rata respon</small><b id="k-resp">–</b></div>
     <div class="kpi"><small>Rata-rata penyelesaian</small><b id="k-res">–</b></div>
   </section>
-  <section class="22222grid">
+
+  <section class="grid">
     <div class="card c8"><h2>Tren tiket harian</h2><div class="chart"><canvas id="ch-trend"></canvas></div></div>
     <div class="card c4"><h2>Jenis masalah teratas</h2><div class="chart"><canvas id="ch-jenis"></canvas></div></div>
-    <div class="card c6"><h2>Tiket masuk per jam</h2><div class="chart"><canvas id="ch-hour"></canvas></div></div>
-    <div class="card c6"><h2>Peringkat petugas <span id="lb-per" style="color:var(--mute);font-weight:500"></span></h2>
-      <table><thead><tr><th>Petugas</th><th class="n">Tiket</th><th class="n">Selesai</th><th class="n">Skor</th></tr></thead><tbody id="lb"></tbody></table></div>
+
+    <div class="card c12"><h2>Tiket masuk per jam</h2><div class="chart"><canvas id="ch-hour"></canvas></div></div>
+    <div class="card c12">
+      <h2>Peringkat petugas <span id="lb-per" style="color:var(--mute);font-weight:500"></span></h2>
+      <div id="podium"></div>
+      <table id="lb-table" hidden>
+        <thead><tr><th>#</th><th>Petugas</th><th class="n">Tiket</th><th class="n">Selesai</th><th class="n">Skor</th></tr></thead>
+        <tbody id="lb"></tbody>
+      </table>
+    </div>
+
     <div class="card c12"><h2>Riwayat proses ETL</h2>
       <table><thead><tr><th>Task</th><th>Status</th><th class="n">Baris baru</th><th>Mulai</th></tr></thead><tbody id="etl"></tbody></table></div>
   </section>
@@ -49,8 +59,37 @@ const get=async(u)=>{const r=await fetch(u); if(r.status===401){location="/login
 const fmtMin=m=>m==null?"–":m>=60?(m/60).toFixed(1)+" jam":m+" mnt";
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 const axisTitle=t=>({display:true,text:t,color:"#5b7487",font:{weight:600}});
+const initials=n=>String(n).trim().split(/\s+/).slice(0,2).map(w=>w[0]).join("").toUpperCase()||"?";
 
 function draw(id,cfg){charts[id]?.destroy(); charts[id]=new Chart($(id),{...cfg,options:{responsive:true,maintainAspectRatio:false,...cfg.options}})}
+
+function renderLeaderboard(lb){
+  const podium=$("podium"), table=$("lb-table");
+  if(!lb.length){
+    podium.innerHTML=`<p class="empty">Belum ada data. Jalankan ETL dulu.</p>`;
+    table.hidden=true; return;
+  }
+  // Susunan podium: juara 2 – juara 1 – juara 3
+  const top=lb.slice(0,3).map((r,i)=>({...r,rank:i+1}));
+  const order=[top[1],top[0],top[2]].filter(Boolean);
+  podium.innerHTML=`<div class="podium">${order.map(r=>`
+    <div class="pd r${r.rank}">
+      <div class="av">${esc(initials(r.petugas))}</div>
+      <div class="nm" title="${esc(r.petugas)}">${esc(r.petugas)}</div>
+      <div class="meta">${r.total_selesai}/${r.total_tiket} selesai</div>
+      <div class="blk"><span class="rk">${r.rank}</span><span class="sc">${(r.skor*100).toFixed(1)} poin</span></div>
+    </div>`).join("")}</div><div class="podium-base"></div>`;
+
+  const rest=lb.slice(3);
+  table.hidden=!rest.length;
+  $("lb").innerHTML=rest.map((r,i)=>`<tr>
+    <td><span class="rank-no">${i+4}</span></td>
+    <td>${esc(r.petugas)}</td>
+    <td class="n">${r.total_tiket}</td>
+    <td class="n">${r.total_selesai}</td>
+    <td class="n"><span class="scorebar"><i style="--w:${Math.min(100,r.skor*100).toFixed(0)}%"></i><b>${(r.skor*100).toFixed(1)}</b></span></td>
+  </tr>`).join("");
+}
 
 async function load(){
   const d=$("range").value;
@@ -76,11 +115,12 @@ async function load(){
   draw("ch-hour",{type:"bar",data:{labels:hrs.map(x=>String(x).padStart(2,"0")+":00"),datasets:[{label:"Tiket",data:hrs.map(x=>hm[x]||0),
       backgroundColor:hrs.map(x=>(hm[x]||0)===mx&&mx>0?NAVY:PALE),borderRadius:3}]},
     options:{plugins:{legend:{display:false},tooltip:{callbacks:{title:i=>"Jam "+i[0].label,label:c=>c.parsed.y+" tiket"}}},
-      scales:{x:{title:axisTitle("Jam tiket diterima"),ticks:{autoSkip:false,maxRotation:90,minRotation:90,font:{size:10}}},
+      scales:{x:{title:axisTitle("Jam tiket diterima"),ticks:{autoSkip:false,maxRotation:0,minRotation:0,font:{size:11}}},
               y:{beginAtZero:true,title:axisTitle("Jumlah tiket"),ticks:{precision:0}}}}});
 
   $("lb-per").textContent=lb.length?"· "+lb[0].periode:"";
-  $("lb").innerHTML=lb.length?lb.map(r=>`<tr><td>${esc(r.petugas)}</td><td class="n">${r.total_tiket}</td><td class="n">${r.total_selesai}</td><td class="n"><b>${(r.skor*100).toFixed(1)}</b></td></tr>`).join(""):`<tr><td colspan="4" class="empty">Belum ada data. Jalankan ETL dulu.</td></tr>`;
+  renderLeaderboard(lb);
+
   $("etl").innerHTML=etl.length?etl.map(r=>`<tr><td>${esc(r.task_name)}</td><td><span class="pill ${esc(r.status)}">${esc(r.status)}</span></td><td class="n">${r.rows_new??"–"}</td><td>${esc(r.mulai)}</td></tr>`).join(""):`<tr><td colspan="4" class="empty">Belum ada riwayat.</td></tr>`;
 }
 $("range").onchange=load; load(); setInterval(load,60000);
